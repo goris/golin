@@ -17,10 +17,14 @@ Here are some useful links we read for understanding JWT and some logins procedu
   - https://github.com/boltdb/bolt#resources
   - http://jwt.io/
   - https://tools.ietf.org/html/rfc7519
-  - 
-  
+
 ## TODO
 
-- Some configurations added using a file needs to be done
-- Some DB connections to ensure MVP functionality
+- Read configuration using a file to determine where the DB is
+- Configuration file for the data schema and how to look for it
+- Create blacklist for logout
+- Connect it using some UI to verify functionality
+- Deployment method (consider using Docker and tool )
+- Statistics about usage
+- Check reliabilty and synchronization of BoltDB
   
