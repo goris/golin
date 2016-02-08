@@ -7,8 +7,8 @@ import (
 )
 
 type Configuration struct {
-    AccountsDB DBConfig
-    Schema Schema
+    AccountsDB DBConfig `json:"dbconfig,omitempty"`
+    Schema Schema `json:"schema,omitempty"`
 }
 
 type Schema struct {

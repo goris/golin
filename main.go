@@ -60,23 +60,21 @@ type Claim struct {
 // since this is the MVP of this microservice, this works for achieving
 // what we want.
 func (u User) Login(user, password string) (string, error) {
-    var cfg *config.Configuration
-    var err error
-    cfg, err = config.ReadConfig("config/config.conf")
-    fmt.Println(cfg.AccountsDB.Host)
+    cfg, err := config.ReadConfig("config/config.conf")
+    fmt.Println("Reading conf:", cfg.AccountsDB, cfg.Schema, err)
     dbconn := fmt.Sprintf("host=%s port=%d dbname=%s sslmode=disable", cfg.AccountsDB.Host, cfg.AccountsDB.Port, cfg.AccountsDB.DBName)
     masterDB, err = sql.Open("postgres", dbconn)
-    fmt.Println(err)
-    rows, err := masterDB.Query("SELECT * FROM accounts")
-    fmt.Println("wors: ", err)
+    fmt.Println("Error opening DB: ", err)
+    query := fmt.Sprintf(`SELECT * FROM %s WHERE %s = '%s' `, cfg.Schema.Table, cfg.Schema.Email, user)
+    fmt.Println("query: ", query)
+    rows, err := masterDB.Query(query)
     if err != nil {
         return "NO", err
     }
     var account Account
     for rows.Next() {
         rows.Scan(&account.Email, &account.Password)
-        fmt.Println(account.Email, account.Password)
-        fmt.Println("Row")
+        fmt.Println("Data:", account.Email, account.Password)
     }
     rows.Close()
     return account.Email, err
