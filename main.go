@@ -1,19 +1,19 @@
 package main
 
 import (
-    "database/sql"
+	"database/sql"
 	"encoding/json"
 	"fmt"
-    "github.com/boltdb/bolt"
+	"github.com/boltdb/bolt"
 	"github.com/dgrijalva/jwt-go"
 	"github.com/fatih/structs"
 	"github.com/gin-gonic/gin"
-    _ "github.com/lib/pq"
-    "github.schibsted.io/smmx/golin/boltdb"
+	_ "github.com/lib/pq"
+	"github.schibsted.io/smmx/golin/boltdb"
+	"github.schibsted.io/smmx/golin/config"
 	"github.schibsted.io/smmx/golin/login"
 	"github.schibsted.io/smmx/golin/tokens"
-	"github.schibsted.io/smmx/golin/config"
-    "log"
+	"log"
 	"regexp"
 	"strings"
 	"time"
@@ -23,7 +23,7 @@ import (
 // The configuration file should also include to which DB it should
 // connnect to retrieve and ensure the login of the users.
 // ANother things that the configuration file should include are
-// the tables where the users information are and also which 
+// the tables where the users information are and also which
 // columns to look into.
 var secret = "ChAvO"
 
@@ -31,8 +31,8 @@ var secret = "ChAvO"
 // very well accordingly into what we want to achieve, which is
 // a secure and fast service to consume tokens.
 var (
-    db *bolt.DB
-    masterDB   *sql.DB
+	db       *bolt.DB
+	masterDB *sql.DB
 )
 
 type User struct {
@@ -47,8 +47,8 @@ type Token struct {
 }
 
 type Account struct {
-    Email string
-    Password string
+	Email    string
+	Password string
 }
 
 type Claim struct {
@@ -60,24 +60,24 @@ type Claim struct {
 // since this is the MVP of this microservice, this works for achieving
 // what we want.
 func (u User) Login(user, password string) (string, error) {
-    cfg, err := config.ReadConfig("config/config.conf")
-    fmt.Println("Reading conf:", cfg.AccountsDB, cfg.Schema, err)
-    dbconn := fmt.Sprintf("host=%s port=%d dbname=%s sslmode=disable", cfg.AccountsDB.Host, cfg.AccountsDB.Port, cfg.AccountsDB.DBName)
-    masterDB, err = sql.Open("postgres", dbconn)
-    fmt.Println("Error opening DB: ", err)
-    query := fmt.Sprintf(`SELECT * FROM %s WHERE %s = '%s' `, cfg.Schema.Table, cfg.Schema.Email, user)
-    fmt.Println("query: ", query)
-    rows, err := masterDB.Query(query)
-    if err != nil {
-        return "NO", err
-    }
-    var account Account
-    for rows.Next() {
-        rows.Scan(&account.Email, &account.Password)
-        fmt.Println("Data:", account.Email, account.Password)
-    }
-    rows.Close()
-    return account.Email, err
+	cfg, err := config.ReadConfig("config/config.conf")
+	fmt.Println("Reading conf:", cfg.AccountsDB, cfg.Schema, err)
+	dbconn := fmt.Sprintf("host=%s port=%d dbname=%s sslmode=disable", cfg.AccountsDB.Host, cfg.AccountsDB.Port, cfg.AccountsDB.DBName)
+	masterDB, err = sql.Open("postgres", dbconn)
+	fmt.Println("Error opening DB: ", err)
+	query := fmt.Sprintf(`SELECT * FROM %s WHERE %s = '%s' `, cfg.Schema.Table, cfg.Schema.Email, user)
+	fmt.Println("query: ", query)
+	rows, err := masterDB.Query(query)
+	if err != nil {
+		return "NO", err
+	}
+	var account Account
+	for rows.Next() {
+		rows.Scan(&account.Email, &account.Password)
+		fmt.Println("Data:", account.Email, account.Password)
+	}
+	rows.Close()
+	return account.Email, err
 }
 
 // JWT way to create and generate tokens
@@ -100,12 +100,12 @@ func (t Token) GenerateToken(SignatureStr string) (string, error) {
 
 // Use config file to decide which DB you'll be using for storing the tokens
 func main() {
-    var err error
+	var err error
 	r := gin.Default()
-    db, err = boltdb.OpenBoltDB("tokens")
-    if err != nil {
-        log.Fatal(err)
-    }
+	db, err = boltdb.OpenBoltDB("tokens")
+	if err != nil {
+		log.Fatal(err)
+	}
 	publics := r.Group("api/v1/public")
 	privates := r.Group("api/v1/private")
 	privates.GET("/users/:id", GetUser)
@@ -114,7 +114,7 @@ func main() {
 }
 
 func ValidateToken(encriptedToken string) (string, error) {
-    // TODO: Blacklist mechanism
+	// TODO: Blacklist mechanism
 	tokData := regexp.MustCompile(`\s*$`).ReplaceAll([]byte(encriptedToken), []byte{})
 
 	currentToken, err := jwt.Parse(string(tokData), func(t *jwt.Token) (interface{}, error) {
@@ -146,7 +146,7 @@ func ValidateToken(encriptedToken string) (string, error) {
 }
 
 // These are the endpoints required to do a login and verifying that tokens are
-// alive 
+// alive
 func LoginUser(c *gin.Context) {
 	var user User
 	var loginer login.Loginer
@@ -165,16 +165,16 @@ func LoginUser(c *gin.Context) {
 
 	if err != nil {
 		c.JSON(404, gin.H{"error generating token": err})
-    } else {
-        // Here the token is sent to BoltDB
-        data := structs.Map(user)
-        err = boltdb.UpdateBucket(db, tokenStr, data)
-        if err != nil {
-            c.JSON(404, gin.H{"error updating bucket": err})
-        } else {
-            c.JSON(201, gin.H{"token": tokenStr, "email": email})
-        }
-    }
+	} else {
+		// Here the token is sent to BoltDB
+		data := structs.Map(user)
+		err = boltdb.UpdateBucket(db, tokenStr, data)
+		if err != nil {
+			c.JSON(404, gin.H{"error updating bucket": err})
+		} else {
+			c.JSON(201, gin.H{"token": tokenStr, "email": email})
+		}
+	}
 }
 
 // Here we use the function to validate if a token exists and if the user should
