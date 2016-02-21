@@ -6,7 +6,7 @@ package login
 */
 
 type Loginer interface {
-	Login(user, password string) (string, string)
+	Login(user, password string) (string, error)
 }
 
 type SocialLoginer interface {

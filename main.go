@@ -1,15 +1,18 @@
 package main
 
 import (
+    "database/sql"
 	"encoding/json"
 	"fmt"
     "github.com/boltdb/bolt"
 	"github.com/dgrijalva/jwt-go"
 	"github.com/fatih/structs"
 	"github.com/gin-gonic/gin"
-    "github.com/gophergala2016/golin/boltdb"
-	"github.com/gophergala2016/golin/login"
-	"github.com/gophergala2016/golin/tokens"
+    _ "github.com/lib/pq"
+    "github.schibsted.io/smmx/golin/boltdb"
+	"github.schibsted.io/smmx/golin/login"
+	"github.schibsted.io/smmx/golin/tokens"
+	"github.schibsted.io/smmx/golin/config"
     "log"
 	"regexp"
 	"strings"
@@ -27,7 +30,10 @@ var secret = "ChAvO"
 // BoltDB was used because of it's speed and architecture goes
 // very well accordingly into what we want to achieve, which is
 // a secure and fast service to consume tokens.
-var db *bolt.DB
+var (
+    db *bolt.DB
+    masterDB   *sql.DB
+)
 
 type User struct {
 	AccountId string `json:"account_id,omitempty"`
@@ -40,6 +46,11 @@ type Token struct {
 	Token string
 }
 
+type Account struct {
+    Email string
+    Password string
+}
+
 type Claim struct {
 	Id  string
 	exp int64
@@ -48,11 +59,25 @@ type Claim struct {
 // This is where config file should be used to read and compare users
 // since this is the MVP of this microservice, this works for achieving
 // what we want.
-func (u User) Login(user, password string) (string, string) {
-	if password == "qwerty" {
-		return user, "chavo@segundamano.mx"
-	}
-	return "No", "NO"
+func (u User) Login(user, password string) (string, error) {
+    cfg, err := config.ReadConfig("config/config.conf")
+    fmt.Println("Reading conf:", cfg.AccountsDB, cfg.Schema, err)
+    dbconn := fmt.Sprintf("host=%s port=%d dbname=%s sslmode=disable", cfg.AccountsDB.Host, cfg.AccountsDB.Port, cfg.AccountsDB.DBName)
+    masterDB, err = sql.Open("postgres", dbconn)
+    fmt.Println("Error opening DB: ", err)
+    query := fmt.Sprintf(`SELECT * FROM %s WHERE %s = '%s' `, cfg.Schema.Table, cfg.Schema.Email, user)
+    fmt.Println("query: ", query)
+    rows, err := masterDB.Query(query)
+    if err != nil {
+        return "NO", err
+    }
+    var account Account
+    for rows.Next() {
+        rows.Scan(&account.Email, &account.Password)
+        fmt.Println("Data:", account.Email, account.Password)
+    }
+    rows.Close()
+    return account.Email, err
 }
 
 // JWT way to create and generate tokens
@@ -89,6 +114,7 @@ func main() {
 }
 
 func ValidateToken(encriptedToken string) (string, error) {
+    // TODO: Blacklist mechanism
 	tokData := regexp.MustCompile(`\s*$`).ReplaceAll([]byte(encriptedToken), []byte{})
 
 	currentToken, err := jwt.Parse(string(tokData), func(t *jwt.Token) (interface{}, error) {
@@ -140,6 +166,7 @@ func LoginUser(c *gin.Context) {
 	if err != nil {
 		c.JSON(404, gin.H{"error generating token": err})
     } else {
+        // Here the token is sent to BoltDB
         data := structs.Map(user)
         err = boltdb.UpdateBucket(db, tokenStr, data)
         if err != nil {
