@@ -24,3 +24,6 @@ _testmain.go
 *.prof
 
 *.db
+
+gin-bin
+golin
