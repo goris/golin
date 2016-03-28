@@ -15,29 +15,20 @@ import (
 	"github.schibsted.io/smmx/golin/tokens"
 	"log"
 	"regexp"
-	"strings"
 	"time"
 )
-
-// This secret should be included via a configuration file
-// The configuration file should also include to which DB it should
-// connnect to retrieve and ensure the login of the users.
-// ANother things that the configuration file should include are
-// the tables where the users information are and also which
-// columns to look into.
-var secret = "ChAvO"
 
 // BoltDB was used because of it's speed and architecture goes
 // very well accordingly into what we want to achieve, which is
 // a secure and fast service to consume tokens.
 var (
-	db       *bolt.DB
-	masterDB *sql.DB
+	boltWrite *bolt.DB
+	sqlDB     *sql.DB
+	cfg       *config.Configuration
 )
 
 type User struct {
 	AccountId string `json:"account_id,omitempty"`
-	Username  string `json:"username,omitempty"`
 	Email     string `json:"email,omitempty"`
 	Password  string `json:"password,omitempty"`
 }
@@ -56,93 +47,38 @@ type Claim struct {
 	exp int64
 }
 
-// This is where config file should be used to read and compare users
-// since this is the MVP of this microservice, this works for achieving
-// what we want.
-func (u User) Login(user, password string) (string, error) {
-	cfg, err := config.ReadConfig("config/config.conf")
-	fmt.Println("Reading conf:", cfg.AccountsDB, cfg.Schema, err)
-	dbconn := fmt.Sprintf("host=%s port=%d dbname=%s sslmode=disable", cfg.AccountsDB.Host, cfg.AccountsDB.Port, cfg.AccountsDB.DBName)
-	masterDB, err = sql.Open("postgres", dbconn)
-	fmt.Println("Error opening DB: ", err)
-	query := fmt.Sprintf(`SELECT * FROM %s WHERE %s = '%s' `, cfg.Schema.Table, cfg.Schema.Email, user)
-	fmt.Println("query: ", query)
-	rows, err := masterDB.Query(query)
+func init() {
+	var err error
+	cfg, err = config.ReadConfig("config/config.conf")
+	fmt.Println("Reading conf:", cfg.AccountsDB, cfg.Schema, cfg.Keys)
 	if err != nil {
-		return "NO", err
+		panic("Failed to init due to configurations")
 	}
-	var account Account
-	for rows.Next() {
-		rows.Scan(&account.Email, &account.Password)
-		fmt.Println("Data:", account.Email, account.Password)
+
+	boltWrite, err = boltdb.OpenBoltDB("tokens")
+	if err != nil {
+		log.Fatal(err)
+		panic(err)
 	}
-	rows.Close()
-	return account.Email, err
-}
 
-// JWT way to create and generate tokens
-func (t Token) GenerateToken(SignatureStr string) (string, error) {
-	var claim Claim
-
-	claim.Id = SignatureStr
-	claim.exp = time.Now().Add(time.Hour * 1).Unix()
-
-	alg := jwt.GetSigningMethod("HS256")
-	token := jwt.New(alg)
-	token.Claims = structs.Map(claim)
-
-	if tokenStr, err := token.SignedString([]byte(secret)); err == nil {
-		return tokenStr, nil
-	} else {
-		return "", err
+	dbconn := fmt.Sprintf("host=%s port=%d dbname=%s sslmode=disable", cfg.AccountsDB.Host, cfg.AccountsDB.Port, cfg.AccountsDB.DBName)
+	sqlDB, err = sql.Open("postgres", dbconn)
+	if err != nil {
+		fmt.Println("Error opening DB: ", err)
+		fmt.Println(dbconn)
+		log.Fatal(err)
 	}
+	fmt.Println("Init finished")
 }
 
 // Use config file to decide which DB you'll be using for storing the tokens
 func main() {
-	var err error
 	r := gin.Default()
-	db, err = boltdb.OpenBoltDB("tokens")
-	if err != nil {
-		log.Fatal(err)
-	}
 	publics := r.Group("api/v1/public")
 	privates := r.Group("api/v1/private")
 	privates.GET("/users/:id", GetUser)
 	publics.POST("/users", LoginUser)
-	r.Run(":8080")
-}
-
-func ValidateToken(encriptedToken string) (string, error) {
-	// TODO: Blacklist mechanism
-	tokData := regexp.MustCompile(`\s*$`).ReplaceAll([]byte(encriptedToken), []byte{})
-
-	currentToken, err := jwt.Parse(string(tokData), func(t *jwt.Token) (interface{}, error) {
-		return []byte(secret), nil
-	})
-
-	// Print an error if we can't parse for some reason
-	if err != nil {
-		fmt.Println("Couldn't parse token: ", err)
-		return "", fmt.Errorf("Couldn't parse token: %v", err)
-	}
-
-	fmt.Println("currentToken ", currentToken)
-	// Is token invalid?
-	if !currentToken.Valid {
-		return "", fmt.Errorf("Token is invalid")
-	}
-
-	if err != nil {
-		//Validate if token has expired or is not parseable
-		//Validate in the blacklist
-		return "", err
-	}
-
-	// Print the token details
-	_, err = json.MarshalIndent(currentToken.Claims, "", "    ")
-
-	return string(tokData), err
+	r.Run()
 }
 
 // These are the endpoints required to do a login and verifying that tokens are
@@ -160,19 +96,19 @@ func LoginUser(c *gin.Context) {
 	loginer = user
 	tokener = token
 
-	SignatureStr, email := loginer.Login(user.Username, user.Password)
-	tokenStr, err := tokener.GenerateToken(SignatureStr)
+	SignatureStr, err := loginer.Login(user.Email, user.Password)
+	tokenStr, err = tokener.GenerateToken(SignatureStr)
 
 	if err != nil {
 		c.JSON(404, gin.H{"error generating token": err})
 	} else {
 		// Here the token is sent to BoltDB
 		data := structs.Map(user)
-		err = boltdb.UpdateBucket(db, tokenStr, data)
+		err = boltdb.UpdateBucket(boltWrite, tokenStr, data)
 		if err != nil {
 			c.JSON(404, gin.H{"error updating bucket": err})
 		} else {
-			c.JSON(201, gin.H{"token": tokenStr, "email": email})
+			c.JSON(201, gin.H{"token": tokenStr, "email": user.Email})
 		}
 	}
 }
@@ -181,18 +117,98 @@ func LoginUser(c *gin.Context) {
 // alllowed to enter and go through
 func GetUser(c *gin.Context) {
 	_ = c.Params.ByName("id")
-	var currentToken string
+	var currentToken Token
 
-	authorization_array := c.Request.Header["Authorization"]
-	if len(authorization_array) > 0 {
-		currentToken = strings.Fields(strings.TrimSpace(authorization_array[0]))[1]
+	if len(c.Request.Header["Authorization"]) > 0 {
+		currentToken.Token = string(c.Request.Header["Authorization"][0])
 	}
 
-	newToken, err := ValidateToken(currentToken)
+	newToken, err := currentToken.ValidateToken(currentToken.Token)
 
 	if err != nil {
-		c.JSON(404, gin.H{"error": err})
+		c.JSON(403, gin.H{"error": err})
 	} else {
 		c.JSON(200, gin.H{"message": "chingon perron", "token": newToken})
+	}
+}
+
+func (t Token) ValidateToken(encriptedToken string) (string, error) {
+	// TODO: Blacklist mechanism of logout
+	tokData := regexp.MustCompile(`\s*$`).ReplaceAll([]byte(encriptedToken), []byte{})
+
+	currentToken, err := jwt.Parse(string(tokData), func(t *jwt.Token) (interface{}, error) {
+		return []byte(cfg.Keys.Secret), nil
+	})
+
+	// Print an error if we can't parse for some reason
+	if err != nil {
+		fmt.Println("Couldn't parse token: ", err)
+		return "", err
+	}
+
+	fmt.Println("currentToken ", currentToken)
+	// Is token invalid?
+	if !currentToken.Valid {
+		return "", fmt.Errorf("Token is invalid")
+	}
+
+	//Validate hasn't expired
+	fmt.Println(currentToken)
+	email := currentToken.Claims["Id"].(string)
+	if Expired(currentToken.Raw, email) {
+		return "", fmt.Errorf("Token has expired")
+	}
+
+	// Print the token details
+	_, err = json.MarshalIndent(currentToken.Claims, "", "    ")
+
+	return string(tokData), err
+}
+
+func Expired(token, email string) bool {
+	some, err := boltdb.GetEmailValue(boltWrite, token)
+	if err != nil {
+		fmt.Println(err)
+		return true
+	}
+	return !(some == email)
+}
+
+// This is where config file should be used to read and compare users
+// since this is the MVP of this microservice, this works for achieving
+// what we want.
+func (u User) Login(user, password string) (string, error) {
+	query := fmt.Sprintf(`SELECT * FROM %s WHERE %s = '%s' `, cfg.Schema.Table, cfg.Schema.Email, user)
+	fmt.Println("Query: ", query)
+	rows, err := sqlDB.Query(query)
+	if err != nil {
+		rows.Close()
+		return "", err
+	}
+
+	var account Account
+	for rows.Next() {
+		rows.Scan(&account.Email, &account.Password)
+		fmt.Println("Query Result:", account.Email, account.Password)
+	}
+	rows.Close()
+	return account.Email, err
+}
+
+// JWT way to create and generate tokens
+func (t Token) GenerateToken(SignatureStr string) (string, error) {
+	var claim Claim
+
+	claim.Id = SignatureStr
+	claim.exp = time.Now().Add(time.Hour * 1).Unix()
+
+	alg := jwt.GetSigningMethod("HS256")
+	token := jwt.New(alg)
+	token.Claims = structs.Map(claim)
+
+	if tokenStr, err := token.SignedString([]byte(cfg.Keys.Secret)); err == nil {
+		return tokenStr, nil
+	} else {
+		return "", err
 	}
 }

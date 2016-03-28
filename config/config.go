@@ -9,6 +9,7 @@ import (
 type Configuration struct {
 	AccountsDB DBConfig `json:"dbconfig,omitempty"`
 	Schema     Schema   `json:"schema,omitempty"`
+	Keys       Keys     `json:"keys,omitempty"`
 }
 
 type Schema struct {
@@ -25,11 +26,15 @@ type DBConfig struct {
 	Password string
 }
 
+type Keys struct {
+	Secret []byte
+}
+
 func ReadConfig(f string) (*Configuration, error) {
 
 	file, err := os.Open(f)
 	if err != nil {
-		fmt.Println("Config - File Error: %s", err)
+		fmt.Println("Config - File Error: ", err)
 		return nil, fmt.Errorf("Config - File Error: %s", err)
 	}
 
@@ -37,7 +42,7 @@ func ReadConfig(f string) (*Configuration, error) {
 	configuration := Configuration{}
 
 	if err := decoder.Decode(&configuration); err != nil {
-		fmt.Println("Config - Decoding Error: %s", err)
+		fmt.Println("Config - Decoding Error: ", err)
 		return nil, fmt.Errorf("Config - Decoding Error: %s", err)
 	}
 	return &configuration, nil

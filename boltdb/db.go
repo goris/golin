@@ -17,8 +17,19 @@ func OpenBoltDB(name string) (*bolt.DB, error) {
 	return boltDB, err
 }
 
+func GetEmailValue(db *bolt.DB, bucket string) (string, error) {
+	fmt.Println("Reading bucket: ", bucket)
+	var v []byte
+	err := db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(bucket))
+		v = b.Get([]byte("Email"))
+		return nil
+	})
+	return string(v), err
+}
+
 func UpdateBucket(db *bolt.DB, bucket string, data map[string]interface{}) error {
-	fmt.Println(bucket, data)
+	fmt.Println("Updating bucket:", bucket, data)
 	err := db.Update(func(tx *bolt.Tx) error {
 		bucket, err := tx.CreateBucketIfNotExists([]byte(bucket))
 		if err != nil {
